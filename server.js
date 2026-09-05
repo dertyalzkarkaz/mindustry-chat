@@ -1,18 +1,33 @@
-const { WebSocketServer } = require('ws');
+const http = require('http');
 const PORT = process.env.PORT || 8080;
-const wss = new WebSocketServer({ port: PORT });
 
-console.log(`Сервер чата запущен на порту ${PORT}...`);
+let chatMessages = ["[purple]Система: [white]Сервер в облаке успешно запущен и работает!"];
 
-wss.on('connection', (ws) => {
-    console.log('Игрок подключился');
-    ws.on('message', (message) => {
-        const textMessage = message.toString();
-        wss.clients.forEach((client) => {
-            if (client.readyState === 1) {
-                client.send(textMessage);
+const server = http.createServer((req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+    if (req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', () => {
+            try {
+                const data = JSON.parse(body);
+                if (data.msg) {
+                    chatMessages.push(data.msg);
+                    if (chatMessages.length > 8) chatMessages.shift();
+                }
+                res.end(JSON.stringify({ status: "ok" }));
+            } catch(e) {
+                res.end(JSON.stringify({ error: "Invalid JSON" }));
             }
         });
-    });
-    ws.on('close', () => console.log('Игрок отключился'));
+    } else {
+        res.end(JSON.stringify({ history: chatMessages }));
+    }
+});
+
+server.listen(PORT, () => {
+    console.log(`HTTP сервер чата запущен на порту ${PORT}`);
 });
