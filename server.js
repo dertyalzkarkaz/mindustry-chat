@@ -1,22 +1,31 @@
 const http = require('http');
+const url = require('url'); // Добавили стандартный модуль для разбора ссылок
 const PORT = process.env.PORT || 8080;
 
 let chatMessages = ["[purple]Система: [white]Чат успешно обновлен!"];
-let totalUsers = new Set(); // Список всех уникальных ников
-let onlineUsers = {};      // Никнеймы и время их последнего онлайна
+let totalUsers = new Set(); 
+let onlineUsers = {};      
 
 const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
-    // Очищаем онлайн от тех, кто не слал запросы больше 10 секунд
     const now = Date.now();
     Object.keys(onlineUsers).forEach(user => {
-        if (now - onlineUsers[user] > 10000) {
+        if (now - onlineUsers[user] > 12000) { // 12 секунд таймаут
             delete onlineUsers[user];
         }
     });
+
+    // Разбираем URL по-старому (работает стабильно)
+    const parsedUrl = url.parse(req.url, true);
+    const userParam = parsedUrl.query.user;
+
+    if (userParam) {
+        totalUsers.add(userParam);
+        onlineUsers[userParam] = now;
+    }
 
     if (req.method === 'POST') {
         let body = '';
@@ -24,13 +33,10 @@ const server = http.createServer((req, res) => {
         req.on('end', () => {
             try {
                 const data = JSON.parse(body);
-                
-                // Регистрируем пользователя
                 if (data.user) {
                     totalUsers.add(data.user);
                     onlineUsers[data.user] = Date.now();
                 }
-
                 if (data.msg) {
                     chatMessages.push(data.msg);
                     if (chatMessages.length > 8) chatMessages.shift();
@@ -41,15 +47,6 @@ const server = http.createServer((req, res) => {
             }
         });
     } else {
-        // GET запрос передает данные об участниках обратно в игру
-        // Проверяем query параметры, если мод передал ник при обновлении чата
-        const urlParams = new URL(req.url, `http://${req.headers.host}`);
-        const userParam = urlParams.searchParams.get('user');
-        if (userParam) {
-            totalUsers.add(userParam);
-            onlineUsers[userParam] = Date.now();
-        }
-
         res.end(JSON.stringify({ 
             history: chatMessages,
             total: totalUsers.size,
@@ -59,5 +56,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`Сервер с счетчиками онлайна работает на порту ${PORT}`);
+    console.log(`Сервер с рабочими счетчиками запущен на порту ${PORT}`);
 });
