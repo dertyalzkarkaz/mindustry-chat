@@ -2,7 +2,7 @@ const http = require('http');
 const url = require('url');
 const PORT = process.env.PORT || 8080;
 
-let chatMessages = ["[purple]Система: [white]Чат успешно обновлен!"];
+let chatMessages = ["[purple]Система: [white]The chat has been updated successfully.!"];
 let totalUsers = new Set(); 
 let onlineUsers = {};      
 let mainServerAddress = { ip: "", port: 6567 };
