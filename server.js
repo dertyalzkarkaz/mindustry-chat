@@ -1,6 +1,5 @@
-const mapName = "portalCilistis";
-const SERVER_URL = "https://onrender.com";
-let currentMap = null;
+const SERVER_URL = "https://mindustry-chat.onrender.com";
+let currentSector = null;
 
 function getModInstance() {
     let allMods = Vars.mods.list();
@@ -14,44 +13,59 @@ function getModInstance() {
     return null;
 }
 
-function saveProgress() {
-    if (currentMap && Vars.state.isGame()) {
-        try {
-            let myMod = getModInstance();
-            if (myMod) {
-                let mapFile = myMod.file.child("maps").child(mapName);
-                MapIO.writeMap(mapFile, currentMap);
-                Log.info("[Darklife] Sector progress successfully saved to file.");
-            }
-        } catch(e) {
-            Log.err("[Darklife] Autosave error: " + e.message);
+function getRandomSector() {
+    let planets = [Planets.serpulo, Planets.erekir];
+    let randomPlanet = planets[Math.floor(Math.random() * planets.length)];
+    let sectors = randomPlanet.sectors;
+    
+    if (sectors && sectors.size > 0) {
+        let randomSector = sectors.get(Math.floor(Math.random() * sectors.size));
+        return randomSector;
+    }
+    return null;
+}
+
+function startRandomSector() {
+    try {
+        let sector = getRandomSector();
+        if (sector == null) {
+            Log.err("[Darklife] Failed to pick a random sector. Defaulting to Serpulo Sector 0.");
+            sector = Planets.serpulo.sectors.get(0);
         }
+        
+        currentSector = sector;
+        Log.info("[Darklife] Selected Planet: " + sector.planet.localizedName + " | Sector: " + sector.id);
+
+        Core.app.post(() => {
+            Vars.logic.reset();
+            
+            sector.generatePreset();
+            let customMap = sector.map;
+            
+            Vars.world.loadMap(customMap);
+            Vars.state.rules = customMap.applyRules(Vars.state.rules.mode());
+            Vars.logic.play();
+            
+            Vars.net.host(6567);
+            Log.info("[Darklife] Global random sector successfully started.");
+            
+            sendIpToRender();
+        });
+    } catch(e) {
+        Log.err("[Darklife] Error generation sector: " + e.message);
     }
 }
 
-function startSector() {
-    let myMod = getModInstance();
-    if (myMod != null) {
-        let mapFile = myMod.file.child("maps").child(mapName);
-        if (mapFile.exists()) {
-            currentMap = MapIO.createMap(mapFile, true);
-            
+function saveProgress() {
+    if (currentSector && Vars.state.isGame()) {
+        try {
             Core.app.post(() => {
-                Vars.logic.reset();
-                Vars.world.loadMap(currentMap);
-                Vars.state.rules = currentMap.applyRules(Vars.state.rules.mode());
-                Vars.logic.play();
-                
-                Vars.net.host(6567);
-                Log.info("[Darklife] Global sector successfully started.");
-                
-                sendIpToRender();
+                Vars.control.saves.saveCurrent();
+                Log.info("[Darklife] Sector progress successfully saved to global server memory.");
             });
-        } else {
-            Log.err("Error: map file not found at " + mapFile.path());
+        } catch(e) {
+            Log.err("[Darklife] Autosave error: " + e.message);
         }
-    } else {
-        Log.err("Error: Mod 'Darklife' not found by server!");
     }
 }
 
@@ -90,27 +104,7 @@ Events.on(ServerLoadEvent, () => {
 
 Events.on(GameOverEvent, event => {
     if (event.winner === Team.crux) {
-        Log.info("[Darklife] Core destroyed! Resetting sector to initial state...");
-        
-        try {
-            let myMod = getModInstance();
-            if (myMod) {
-                let mapFile = myMod.file.child("maps").child(mapName);
-                if (mapFile.exists()) {
-                    currentMap = MapIO.createMap(mapFile, true);
-                    
-                    Core.app.post(() => {
-                        Vars.logic.reset();
-                        Vars.world.loadMap(currentMap);
-                        Vars.state.rules = currentMap.applyRules(Vars.state.rules.mode());
-                        Vars.logic.play();
-                        Log.info("[Darklife] Sector successfully reset and restarted!");
-                    });
-                }
-            }
-        } catch(e) {
-            Log.err("[Darklife] Auto-restart error: " + e.message);
-        }
+        Log.info("[Darklife] Core destroyed! Traveling to a new random planet sector...");
+        startRandomSector();
     }
 });
-                        
