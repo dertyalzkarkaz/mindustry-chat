@@ -1,90 +1,116 @@
-const http = require('http');
-const url = require('url');
-const PORT = process.env.PORT || 8080;
+const mapName = "portalCilistis";
+const SERVER_URL = "https://onrender.com";
+let currentMap = null;
 
-let chatMessages = ["[purple]Система: [white]The chat has been updated successfully.!"];
-let totalUsers = new Set(); 
-let onlineUsers = {};      
-let mainServerAddress = { ip: "", port: 6567 };
-
-const server = http.createServer((req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-
-    const now = Date.now();
-    Object.keys(onlineUsers).forEach(user => {
-        if (now - onlineUsers[user] > 12000) {
-            delete onlineUsers[user];
+function getModInstance() {
+    let allMods = Vars.mods.list();
+    for (let i = 0; i < allMods.size; i++) {
+        let m = allMods.get(i);
+        let mName = m.name.toLowerCase();
+        if (mName.includes("darklife") || m.meta.name.toLowerCase().includes("darklife")) {
+            return m;
         }
-    });
-
-    const parsedUrl = url.parse(req.url, true);
-    const userParam = parsedUrl.query.user;
-
-    if (userParam) {
-        totalUsers.add(userParam);
-        onlineUsers[userParam] = now;
     }
+    return null;
+}
 
-    if (parsedUrl.pathname === '/api/set-main-server' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
-            try {
-                const data = JSON.parse(body);
-                if (data.ip) {
-                    mainServerAddress.ip = data.ip;
-                    mainServerAddress.port = data.port || 6567;
-                    res.end(JSON.stringify({ status: "ok" }));
-                } else {
-                    res.end(JSON.stringify({ error: "Missing IP" }));
-                }
-            } catch(e) {
-                res.end(JSON.stringify({ error: "Invalid JSON" }));
+function saveProgress() {
+    if (currentMap && Vars.state.isGame()) {
+        try {
+            let myMod = getModInstance();
+            if (myMod) {
+                let mapFile = myMod.file.child("maps").child(mapName);
+                MapIO.writeMap(mapFile, currentMap);
+                Log.info("[Darklife] Sector progress successfully saved to file.");
             }
-        });
-        return;
+        } catch(e) {
+            Log.err("[Darklife] Autosave error: " + e.message);
+        }
     }
+}
 
-    if (parsedUrl.pathname === '/api/main-server' && req.method === 'GET') {
-        if (!mainServerAddress.ip) {
-            res.statusCode = 503;
-            res.end(JSON.stringify({ error: "Игровой сервер еще не запустился" }));
+function startSector() {
+    let myMod = getModInstance();
+    if (myMod != null) {
+        let mapFile = myMod.file.child("maps").child(mapName);
+        if (mapFile.exists()) {
+            currentMap = MapIO.createMap(mapFile, true);
+            
+            Core.app.post(() => {
+                Vars.logic.reset();
+                Vars.world.loadMap(currentMap);
+                Vars.state.rules = currentMap.applyRules(Vars.state.rules.mode());
+                Vars.logic.play();
+                
+                Vars.net.host(6567);
+                Log.info("[Darklife] Global sector successfully started.");
+                
+                sendIpToRender();
+            });
         } else {
-            res.end(JSON.stringify(mainServerAddress));
+            Log.err("Error: map file not found at " + mapFile.path());
         }
-        return;
+    } else {
+        Log.err("Error: Mod 'Darklife' not found by server!");
     }
+}
 
-    if (req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
-            try {
-                const data = JSON.parse(body);
-                if (data.user) {
-                    totalUsers.add(data.user);
-                    onlineUsers[data.user] = Date.now();
-                }
-                if (data.msg) {
-                    chatMessages.push(data.msg);
-                    if (chatMessages.length > 8) chatMessages.shift();
-                }
-                res.end(JSON.stringify({ status: "ok" }));
-            } catch(e) {
-                res.end(JSON.stringify({ error: "Invalid JSON" }));
+function sendIpToRender() {
+    try {
+        Http.get("https://ipify.org").submit(res => {
+            if (res.getStatus() == 200) {
+                let ipData = JSON.parse(res.getResultAsString());
+                let publicIp = ipData.ip;
+
+                let request = Http.post(`${SERVER_URL}/api/set-main-server`);
+                request.header("Content-Type", "application/json");
+                request.content = JSON.stringify({ ip: publicIp, port: 6567 });
+                
+                request.submit(response => {
+                    if (response.getStatus() == 200) {
+                        Log.info("[Darklife] Current IP successfully sent to Render: " + publicIp);
+                    } else {
+                        Log.err("[Darklife] Render rejected IP. Status: " + response.getStatus());
+                    }
+                });
             }
         });
-    } else {
-        res.end(JSON.stringify({ 
-            history: chatMessages,
-            total: totalUsers.size,
-            online: Object.keys(onlineUsers).length
-        }));
+    } catch(e) {
+        Log.err("[Darklife] Failed to send IP: " + e.message);
     }
+}
+
+Events.on(ServerLoadEvent, () => {
+    startSector();
+    
+    Timer.schedule(() => {
+        saveProgress();
+    }, 300, 300);
 });
 
-server.listen(PORT, () => {
-    console.log(`Сервер с рабочими счетчиками запущен на порту ${PORT}`);
+Events.on(GameOverEvent, event => {
+    if (event.winner === Team.crux) {
+        Log.info("[Darklife] Core destroyed! Resetting sector to initial state...");
+        
+        try {
+            let myMod = getModInstance();
+            if (myMod) {
+                let mapFile = myMod.file.child("maps").child(mapName);
+                if (mapFile.exists()) {
+                    currentMap = MapIO.createMap(mapFile, true);
+                    
+                    Core.app.post(() => {
+                        Vars.logic.reset();
+                        Vars.world.loadMap(currentMap);
+                        Vars.state.rules = currentMap.applyRules(Vars.state.rules.mode());
+                        Vars.logic.play();
+                        Log.info("[Darklife] Sector successfully reset and restarted!");
+                    });
+                }
+            }
+        } catch(e) {
+            Log.err("[Darklife] Auto-restart error: " + e.message);
+        }
+    }
 });
+                        
